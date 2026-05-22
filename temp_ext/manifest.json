@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Browsey AI Beta",
+  "version": "1.0.8",
+  "description": "Your AI-powered browsing companion.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_title": "Open Browsey"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "exclude_matches": ["*://localhost/*"],
+      "js": ["content.js"],
+      "css": ["style.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "icons": {
+    "128": "logo.png"
+  },
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  }
+}

@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Browsey Sales Intelligence</title>
+  <style>
+    :root {
+      --bg: #07071A;
+      --bg-soft: #0B0B22;
+      --surface: #10102B;
+      --surface-2: #191940;
+      --surface-3: #22224E;
+      --border: #272754;
+      --border-soft: #1C1C42;
+      --brand-blue: #5B8BFF;
+      --brand-violet: #7C5BFF;
+      --brand-pink: #D966FF;
+      --brand-glow: #B19CFF;
+      --text: #F4F4FB;
+      --text-muted: #9A9AB8;
+      --text-subtle: #6E6E92;
+      --success: #3DD68C;
+      --warning: #FFB454;
+      --danger: #FF5C7A;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+
+    body { background-color: var(--bg); color: var(--text); overflow-x: hidden; font-size: 14px; line-height: 1.5; }
+
+    .container { padding: 14px; display: flex; flex-direction: column; gap: 14px; min-height: 100vh; }
+
+    header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+
+    .brand { display: flex; align-items: center; gap: 8px; }
+    .brand-logo { width: 22px; height: 22px; background: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-violet) 45%, var(--brand-pink) 100%); border-radius: 5px; }
+    .brand-name { font-weight: 700; font-size: 15px; background: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-violet) 45%, var(--brand-pink) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+
+    .action-btn { background: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-violet) 45%, var(--brand-pink) 100%); color: white; border: none; padding: 7px 13px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 12px; transition: opacity 0.2s; }
+    .action-btn:hover { opacity: 0.9; }
+    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .state-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 36px 16px; border-radius: 12px; border: 1px solid var(--border); background-color: var(--surface); }
+
+    .spinner { width: 28px; height: 28px; border: 3px solid rgba(124, 91, 255, 0.2); border-top-color: var(--brand-violet); border-radius: 50%; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .badge { display: inline-flex; align-items: center; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; }
+    .badge-fresh { background: rgba(61, 214, 140, 0.15); color: var(--success); }
+    .badge-stale { background: rgba(255, 180, 84, 0.15); color: var(--warning); }
+    .badge-cache { background: rgba(91, 139, 255, 0.15); color: var(--brand-blue); }
+    .badge-degraded { background: rgba(255, 92, 122, 0.15); color: var(--danger); }
+
+    .card { border: 1px solid var(--border); background-color: var(--surface); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+    .card-title { font-size: 11px; font-weight: 700; color: var(--brand-glow); text-transform: uppercase; letter-spacing: 0.06em; }
+
+    .company-header { display: flex; gap: 10px; align-items: center; }
+    .company-logo { width: 38px; height: 38px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; color: var(--brand-glow); flex-shrink: 0; }
+    .company-details h2 { font-size: 15px; font-weight: 600; }
+    .company-details p { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+    ul { list-style: none; display: flex; flex-direction: column; gap: 7px; }
+    li { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; color: var(--text-muted); }
+    li::before { content: "•"; color: var(--brand-violet); font-weight: bold; flex-shrink: 0; }
+
+    .tech-list { display: flex; flex-wrap: wrap; gap: 5px; }
+    .tech-pill { background: var(--surface-2); border: 1px solid var(--border-soft); padding: 3px 7px; border-radius: 5px; font-size: 11px; color: var(--text-muted); }
+
+    /* Scrollable tab bar */
+    .tabs { display: flex; border-bottom: 1px solid var(--border); gap: 0; overflow-x: auto; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab { padding: 8px 10px; color: var(--text-muted); cursor: pointer; font-weight: 600; font-size: 12px; border-bottom: 2px solid transparent; white-space: nowrap; flex-shrink: 0; }
+    .tab.active { color: var(--brand-glow); border-bottom-color: var(--brand-violet); }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: flex; flex-direction: column; gap: 12px; }
+
+    .outreach-box { background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px; }
+    .outreach-header { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 10px; color: var(--text-subtle); font-weight: 700; text-transform: uppercase; }
+    .outreach-body { font-size: 12px; white-space: pre-wrap; color: var(--text-muted); max-height: 180px; overflow-y: auto; }
+
+    .copy-btn { background: transparent; border: 1px solid var(--border); color: var(--brand-glow); cursor: pointer; font-weight: 600; font-size: 10px; padding: 2px 7px; border-radius: 4px; }
+    .copy-btn:hover { background: rgba(177, 156, 255, 0.1); }
+
+    .signal-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px; background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 8px; }
+    .signal-type { font-size: 9px; font-weight: 700; text-transform: uppercase; padding: 2px 5px; border-radius: 4px; flex-shrink: 0; margin-top: 1px; }
+    .signal-type.funding { background: rgba(61, 214, 140, 0.15); color: var(--success); }
+    .signal-type.hiring { background: rgba(91, 139, 255, 0.15); color: var(--brand-blue); }
+    .signal-type.product { background: rgba(124, 91, 255, 0.15); color: var(--brand-violet); }
+    .signal-type.partnership { background: rgba(217, 102, 255, 0.15); color: var(--brand-pink); }
+    .signal-type.award { background: rgba(255, 180, 84, 0.15); color: var(--warning); }
+
+    .person-card { background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px; }
+    .person-name { font-size: 13px; font-weight: 600; color: var(--text); }
+    .person-title { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .person-seniority { display: inline-block; font-size: 9px; font-weight: 700; text-transform: uppercase; padding: 2px 5px; border-radius: 4px; margin-top: 4px; }
+    .seniority-c_level { background: rgba(217, 102, 255, 0.15); color: var(--brand-pink); }
+    .seniority-vp { background: rgba(124, 91, 255, 0.15); color: var(--brand-glow); }
+    .seniority-director { background: rgba(91, 139, 255, 0.15); color: var(--brand-blue); }
+    .seniority-manager { background: rgba(61, 214, 140, 0.15); color: var(--success); }
+    .seniority-individual { background: rgba(110, 110, 146, 0.15); color: var(--text-subtle); }
+    .email-row { display: flex; align-items: center; justify-content: space-between; background: var(--surface-3); border-radius: 5px; padding: 5px 8px; margin-top: 6px; }
+    .email-text { font-size: 11px; font-family: monospace; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .score-bar-wrap { display: flex; align-items: center; gap: 8px; }
+    .score-bar { flex: 1; height: 6px; background: var(--surface-3); border-radius: 3px; overflow: hidden; }
+    .score-fill { height: 100%; background: linear-gradient(90deg, var(--brand-blue), var(--brand-violet)); border-radius: 3px; }
+    .score-label { font-size: 13px; font-weight: 700; color: var(--brand-glow); flex-shrink: 0; }
+
+    .risk-item { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; color: var(--danger); }
+    .risk-item::before { content: "⚠"; flex-shrink: 0; }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <div class="brand-logo"></div>
+        <span class="brand-name">Browsey AI</span>
+      </div>
+      <button id="research-btn" class="action-btn">Research Page</button>
+    </header>
+
+    <!-- State: Welcome -->
+    <div id="welcome-panel" class="state-panel">
+      <h3>Sales Prospecting Active 🎯</h3>
+      <p style="color: var(--text-muted); font-size: 13px;">Navigate to any B2B website and click "Research Page" to generate a full sales brief.</p>
+    </div>
+
+    <!-- State: Loading -->
+    <div id="loading-panel" class="state-panel hidden">
+      <div class="spinner"></div>
+      <h3 id="loading-title">Analyzing Company...</h3>
+      <p id="loading-status" style="color: var(--text-muted); font-size: 12px;">Waking pipeline worker...</p>
+    </div>
+
+    <!-- State: Content -->
+    <div id="content-panel" class="hidden" style="display: flex; flex-direction: column; gap: 14px;">
+
+      <!-- Company Card -->
+      <div class="card">
+        <div class="company-header">
+          <div id="comp-logo" class="company-logo">?</div>
+          <div class="company-details" style="flex: 1; min-width: 0;">
+            <h2 id="comp-name">Company</h2>
+            <p id="comp-meta">Industry · Stage · Employees</p>
+          </div>
+          <span id="cache-badge" class="badge badge-cache">Cached</span>
+        </div>
+        <p id="comp-summary" style="font-size: 12px; color: var(--text-muted); line-height: 1.6;"></p>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <div class="tab active" data-tab="intel">Overview</div>
+        <div class="tab" data-tab="signals">Signals</div>
+        <div class="tab" data-tab="people">People</div>
+        <div class="tab" data-tab="outreach">Outreach</div>
+        <div class="tab" data-tab="more">More</div>
+        <div class="tab" data-tab="timeline">History</div>
+      </div>
+
+      <!-- Tab: Overview -->
+      <div id="tab-intel" class="tab-content active">
+        <div class="card">
+          <div class="card-title">Tech Stack</div>
+          <div id="tech-list" class="tech-list"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Pain Hypotheses</div>
+          <ul id="pains-list"></ul>
+        </div>
+        <div class="card">
+          <div class="card-title">Growth Signals</div>
+          <ul id="growth-list"></ul>
+        </div>
+      </div>
+
+      <!-- Tab: Signals -->
+      <div id="tab-signals" class="tab-content">
+        <div id="signals-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+      </div>
+
+      <!-- Tab: People / Decision Makers -->
+      <div id="tab-people" class="tab-content">
+        <div id="people-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+      </div>
+
+      <!-- Tab: Outreach -->
+      <div id="tab-outreach" class="tab-content">
+        <div class="card">
+          <div class="card-title">ICP Fit Analysis</div>
+          <div id="icp-score-wrap" class="score-bar-wrap" style="margin-bottom: 6px;">
+            <div class="score-bar"><div id="icp-score-fill" class="score-fill" style="width: 0%"></div></div>
+            <span id="icp-score-label" class="score-label">—</span>
+          </div>
+          <p id="icp-analysis" style="font-size: 12px; color: var(--text-muted);"></p>
+        </div>
+        <div id="hooks-container" style="display: flex; flex-direction: column; gap: 10px;"></div>
+      </div>
+
+      <!-- Tab: More (Competitors, Hiring, Customers, News) -->
+      <div id="tab-more" class="tab-content">
+        <div class="card" id="competitors-card">
+          <div class="card-title">Competitors</div>
+          <div id="competitors-list" class="tech-list"></div>
+        </div>
+        <div class="card" id="hiring-card">
+          <div class="card-title">Hiring Signals</div>
+          <ul id="hiring-list"></ul>
+        </div>
+        <div class="card" id="customers-card">
+          <div class="card-title">Known Customers</div>
+          <div id="customers-list" class="tech-list"></div>
+        </div>
+        <div class="card" id="news-card">
+          <div class="card-title">Recent News</div>
+          <ul id="news-list"></ul>
+        </div>
+        <div class="card" id="risk-card">
+          <div class="card-title">Risk Flags</div>
+          <div id="risk-list" style="display: flex; flex-direction: column; gap: 6px;"></div>
+        </div>
+      </div>
+
+      <!-- Tab: Timeline -->
+      <div id="tab-timeline" class="tab-content">
+        <div class="card">
+          <div class="card-title">Signal History</div>
+          <ul id="timeline-list" style="gap: 10px;"></ul>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

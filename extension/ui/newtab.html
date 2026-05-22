@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>New Tab - Browsey AI</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background-color: #0D0D12;
+      color: white;
+      font-family: system-ui, -apple-system, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .logo-area {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 40px;
+    }
+    .logo-icon {
+      width: 64px;
+      height: 64px;
+      background: linear-gradient(135deg, #7C3AED, #00F3FF);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 40px rgba(124, 58, 237, 0.4);
+    }
+    .logo-icon svg { width: 36px; height: 36px; }
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 900;
+      letter-spacing: -1px;
+      background: linear-gradient(to right, #7C3AED, #00F3FF);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      font-size: 0.85rem;
+      color: rgba(255,255,255,0.4);
+      font-weight: 500;
+    }
+    .search-wrapper {
+      width: 100%;
+      max-width: 640px;
+      position: relative;
+    }
+    .search-box {
+      width: 100%;
+      padding: 18px 56px 18px 24px;
+      border-radius: 9999px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.05);
+      color: white;
+      font-size: 1.1rem;
+      outline: none;
+      transition: all 0.3s ease;
+    }
+    .search-box:focus {
+      border-color: #7C3AED;
+      box-shadow: 0 0 20px rgba(124, 58, 237, 0.3);
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .search-box::placeholder {
+      color: rgba(255,255,255,0.3);
+    }
+    .send-icon {
+      position: absolute;
+      right: 6px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #7C3AED, #6D28D9);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+    .send-icon:hover {
+      box-shadow: 0 0 15px rgba(124, 58, 237, 0.5);
+      transform: translateY(-50%) scale(1.05);
+    }
+    .send-icon svg { width: 20px; height: 20px; }
+    .hint {
+      margin-top: 20px;
+      font-size: 0.75rem;
+      color: rgba(255,255,255,0.25);
+      text-align: center;
+    }
+    .hint kbd {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 0.7rem;
+    }
+    .quick-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 28px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .quick-btn {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: rgba(255,255,255,0.6);
+      padding: 8px 16px;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .quick-btn:hover {
+      background: rgba(124, 58, 237, 0.15);
+      border-color: #7C3AED;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <div class="logo-area">
+    <div class="logo-icon">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2V4M5 8V7C5 5.34315 6.34315 4 8 4H16C17.6569 4 19 5.34315 19 7V8" stroke="white" stroke-width="2" stroke-linecap="round"/>
+        <rect x="4" y="8" width="16" height="12" rx="3" stroke="white" stroke-width="2"/>
+        <circle cx="8.5" cy="13.5" r="1.5" fill="#00F3FF"/>
+        <circle cx="15.5" cy="13.5" r="1.5" fill="#00F3FF"/>
+        <path d="M9 17C9.5 17.5 10.5 18 12 18C13.5 18 14.5 17.5 15 17" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <h1>Browsey AI</h1>
+    <p class="subtitle">Ask anything or give me a task to execute</p>
+  </div>
+
+  <div class="search-wrapper">
+    <input type="text" class="search-box" id="searchInput" placeholder="Ask a question, search the web, or give a command..." autofocus />
+    <button class="send-icon" id="sendBtn">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+
+  <div class="quick-actions">
+    <button class="quick-btn" data-query="open maps and search restaurants near me">🗺️ Restaurants nearby</button>
+    <button class="quick-btn" data-query="search youtube for trending videos today">▶️ Trending on YouTube</button>
+    <button class="quick-btn" data-query="search amazon for best phones under 15000">📱 Phones under ₹15K</button>
+    <button class="quick-btn" data-query="find latest tech news">📰 Tech News</button>
+  </div>
+
+  <p class="hint"><kbd>Enter</kbd> to send · <kbd>Alt+B</kbd> toggle sidebar · Powered by Gemma 3</p>
+
+  <script src="newtab.js"></script>
+  <script src="content.js"></script>
+</body>
+</html>

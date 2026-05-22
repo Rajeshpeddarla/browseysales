@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  background-color: #07071A;
+  color: #F4F4FB;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  border-color: #272754;
+}
+
+::selection {
+  background: rgba(124, 91, 255, 0.35);
+  color: #F4F4FB;
+}
+
+@layer components {
+  .gradient-text {
+    @apply bg-brand-gradient bg-clip-text text-transparent;
+  }
+  .gradient-border {
+    position: relative;
+    isolation: isolate;
+  }
+  .gradient-border::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    border-radius: inherit;
+    background: linear-gradient(135deg, #5B8BFF, #7C5BFF, #D966FF);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    pointer-events: none;
+  }
+  .glass {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 100%),
+      rgba(16,16,43,0.7);
+    backdrop-filter: blur(10px);
+  }
+  .ring-brand {
+    box-shadow: 0 0 0 1px rgba(124,91,255,0.4),
+      0 12px 40px -10px rgba(124,91,255,0.45);
+  }
+  .glow-dot {
+    background-image: radial-gradient(rgba(124,91,255,0.35) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+}
+
+.scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(124,91,255,0.35); border-radius: 8px;
+}
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
