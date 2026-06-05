@@ -2,6 +2,83 @@
 // Browsey Optimized Pipeline — Core Type Definitions
 // ============================================================
 
+// ─── P4: Source Reliability (defined first — used by GrowthSignal/PainPoint) ──
+
+export type SourceType =
+  | 'careers_page' | 'github' | 'pricing_page' | 'social'
+  | 'news' | 'ai_inference' | 'tavily' | 'page_text'
+  | 'reddit' | 'g2' | 'glassdoor';
+
+export type TrustLevel = 'high' | 'medium' | 'low';
+
+export interface SourceReliability {
+  source_type: SourceType;
+  trust_level: TrustLevel;
+  trust_multiplier: number;
+}
+
+// ─── P2: Change Detection ─────────────────────────────────────
+
+export type ChangeType =
+  | 'pricing_added' | 'pricing_changed' | 'pricing_removed'
+  | 'cta_changed' | 'tech_added' | 'tech_removed'
+  | 'hiring_increased' | 'hiring_decreased'
+  | 'integration_added' | 'integration_removed'
+  | 'messaging_changed' | 'security_page_added'
+  | 'enterprise_tier_added' | 'funding_detected';
+
+export interface DetectedChange {
+  type: ChangeType;
+  field: string;
+  old_value: unknown;
+  new_value: unknown;
+  significance: 'low' | 'medium' | 'high' | 'critical';
+  summary: string;
+  detected_at: string;
+}
+
+// ─── P3: Freshness Scoring ────────────────────────────────────
+
+export interface FreshnessWeightedSignal {
+  signal: string;
+  freshness_score: number;
+  detected_at: string;
+  expires_after_hours: number;
+  source_type: string;
+}
+
+// ─── P5: External Sentiment ───────────────────────────────────
+
+export interface ExternalSentiment {
+  source: 'reddit' | 'g2' | 'glassdoor' | 'trustpilot' | 'news';
+  sentiment: 'positive' | 'negative' | 'neutral' | 'mixed';
+  summary: string;
+  evidence: string[];
+  url?: string;
+  detected_at: string;
+}
+
+// ─── P6: Signal Correlation ───────────────────────────────────
+
+export interface CorrelatedInference {
+  inference: string;
+  confidence: number;
+  supporting_signals: string[];
+  business_implication: string;
+  urgency: 'low' | 'medium' | 'high';
+}
+
+// ─── Watch Mode ───────────────────────────────────────────────
+
+export interface WatchAlert {
+  id: string;
+  domain: string;
+  user_id: string;
+  change: DetectedChange;
+  triggered_at: string;
+  is_read: boolean;
+}
+
 // --- Extracted Payload Types (from Extension) ---
 
 export interface ExtractedMeta {
@@ -73,6 +150,27 @@ export interface CrawledPage {
   visible_text: string;
   ocr_text?: string;
   extracted_at: string;
+  // Visual intelligence from Playwright screenshots
+  screenshot_base64?: string;
+  visual_signals?: string[];  // detected from screenshot: "pricing table", "RBAC UI", "audit logs panel"
+  pricing_blocks?: string[];  // extracted pricing text blocks
+  integration_names?: string[]; // detected integration names
+  enterprise_signals?: Record<string, string[]>; // categorized enterprise signals
+}
+
+export interface NativeContact {
+  full_name: string;
+  title: string;
+  linkedin_url: string | null;
+  source: 'linkedin_native' | 'google_native';
+  snippet?: string;
+}
+
+export interface GlassdoorSignal {
+  rating?: string;
+  pros: string[];
+  cons: string[];
+  culture_snippet: string;
 }
 
 export interface SocialSignals {
@@ -80,6 +178,10 @@ export interface SocialSignals {
   twitter_scraped_posts?: string[];
   linkedin_screenshot?: string | null;
   twitter_screenshot?: string | null;
+  native_contacts?: NativeContact[];
+  glassdoor_signals?: GlassdoorSignal;
+  github_intel?: any;
+  google_search_intel?: string[];
   reddit?: {
     posts: { title: string; score: number; subreddit: string; url: string }[];
   };
@@ -128,12 +230,24 @@ export interface GrowthSignal {
   signal: string;
   evidence: string;
   confidence: number;
+  // P1: Evidence-centric fields
+  source_type?: SourceType;
+  trust_level?: 'high' | 'medium' | 'low';
+  freshness_score?: number;   // 0-100, decays over time
+  detected_at?: string;       // ISO timestamp
+  reasoning?: string;         // why this signal was inferred
 }
 
 export interface PainPoint {
   pain: string;
   why: string;
   evidence: string;
+  // P1: Evidence-centric fields
+  confidence?: number;
+  source_type?: SourceType;
+  trust_level?: 'high' | 'medium' | 'low';
+  freshness_score?: number;
+  supporting_signals?: string[];  // signal keys that back this pain
 }
 
 export interface DecisionMaker {
@@ -145,6 +259,7 @@ export interface BaseIntel {
   summary_1_line: string;
   summary_paragraph: string;
   industry: string;
+  founders?: string[];
   growth_stage: 'early' | 'growth' | 'scale' | 'enterprise';
   employee_estimate: string;
   company_summary?: {
@@ -239,12 +354,36 @@ export interface BaseIntel {
     case_studies: string[];
   };
   recent_news?: string[];
+  // P5: External sentiment
+  external_sentiment?: ExternalSentiment[];
+  // P6: Correlated inferences
+  correlated_inferences?: CorrelatedInference[];
+  // P2: Recent changes detected
+  detected_changes?: DetectedChange[];
+  // Data quality: 0-100, higher = deeper crawl (Playwright + more pages)
+  data_quality_score?: number;
 }
 
 export interface PersonalizationHook {
   hook: string;
+  subject_line?: string | null;
   channel: 'email' | 'linkedin' | 'call';
   why_it_works: string;
+}
+
+// ─── Contact / People Enrichment ─────────────────────────────
+
+export interface Contact {
+  full_name: string | null;
+  title: string;
+  seniority: 'c_level' | 'vp' | 'director' | 'manager' | 'individual';
+  department: string;
+  email: string | null;
+  email_confidence: 'verified' | 'guessed' | 'pattern' | null;
+  linkedin_url: string | null;
+  phone: string | null;
+  source: 'hunter' | 'linkedin' | 'google' | 'github' | 'crunchbase' | 'page_extraction' | 'llm_inferred';
+  why_contact: string;
 }
 
 export interface PersonalizedIntel {

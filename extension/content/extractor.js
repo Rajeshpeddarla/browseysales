@@ -9,8 +9,38 @@
 
   console.log('[Browsey Extractor] Content script active.');
 
+  // Listen for messages from the web dashboard (via window.postMessage)
+  window.addEventListener('message', (event) => {
+    // Accept messages from the same window
+    if (event.source !== window) return;
+    
+    if (event.data?.type === 'BROWSEY_PING') {
+      window.postMessage({ type: 'BROWSEY_PONG', version: '2.0.0' }, '*');
+    }
+    
+    if (event.data?.type === 'BROWSEY_START_RESEARCH') {
+      // Forward to background script
+      chrome.runtime.sendMessage({
+        type: 'START_RESEARCH',
+        domain: event.data.domain,
+        payload: null
+      }, (response) => {
+        // Forward final result back to dashboard
+        window.postMessage({ type: 'BROWSEY_RESEARCH_RESULT', response }, '*');
+      });
+    }
+  });
+
   // Listen for messages from background script
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.type === 'RESEARCH_STATUS') {
+      window.postMessage({ type: 'BROWSEY_STATUS', status: request }, '*');
+    }
+    
+    if (request.type === 'DEBUG_LOG') {
+      window.postMessage({ type: 'BROWSEY_DEBUG_LOG', message: request.message }, '*');
+    }
+
     if (request.type === 'EXTRACT_PAGE') {
       try {
         const payload = extractPageData();

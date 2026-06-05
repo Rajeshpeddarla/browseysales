@@ -156,7 +156,8 @@ export async function getOrGeneratePersonalization(
   domain: string,
   baseIntel: BaseIntel,
   baseIntelSummary: string | null,
-  mode: 'template' | 'llm' = 'llm'
+  mode: 'template' | 'llm' = 'llm',
+  forceRefresh: boolean = false
 ): Promise<PersonalizedIntel> {
   const supabase = await createClient();
 
@@ -172,17 +173,23 @@ export async function getOrGeneratePersonalization(
     icp_definition: profile?.icp_definition || null,
   });
 
-  // Check cached personalization
-  const { data: cached } = await supabase
-    .from('user_personalization')
-    .select('personalized, user_context_hash')
-    .eq('user_id', userId)
-    .eq('domain', domain)
-    .single();
+  if (!forceRefresh) {
+    // Check cached personalization
+    const { data: cached } = await supabase
+      .from('user_personalization')
+      .select('personalized, user_context_hash')
+      .eq('user_id', userId)
+      .eq('domain', domain)
+      .single();
 
-  // Return cached if context hasn't changed
-  if (cached && cached.user_context_hash === currentHash) {
-    return cached.personalized as unknown as PersonalizedIntel;
+    // Return cached if context hasn't changed
+    if (cached && cached.user_context_hash === currentHash) {
+      // Check if the cached one is degraded. If it is degraded, we should ignore it and regenerate.
+      const p = cached.personalized as any;
+      if (p.icp_match_reasoning !== 'Unable to generate — personalization ran in degraded mode.') {
+        return p as PersonalizedIntel;
+      }
+    }
   }
 
   // Generate new personalization

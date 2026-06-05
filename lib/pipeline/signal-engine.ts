@@ -1,4 +1,7 @@
 import type { BaseIntel, ExtractedPayload, GrowthSignal, PainPoint } from './types';
+import { inferSourceType, applyTrust } from './source-reliability';
+import { computeFreshnessScore, getExpiryHours } from './freshness';
+import { correlateSignals } from './signal-correlator';
 
 type Urgency = 'low' | 'medium' | 'high';
 
@@ -144,6 +147,40 @@ export function analyzePayloadSignals(payload: ExtractedPayload): SignalAnalysis
     );
   }
 
+  // ── NEW: Playwright-enriched enterprise signals ───────────────
+  // These are detected deterministically from DOM, not inferred
+
+  if (has(allText, /\bsoc\s*2\b|\bsoc2\b/i)) {
+    addFinding(findings, 'soc2', 'SOC 2 compliance detected', 'SOC 2 certification mentioned on site', 0.92);
+  }
+  if (has(allText, /\bhipaa\b/i)) {
+    addFinding(findings, 'hipaa', 'HIPAA compliance detected', 'HIPAA compliance mentioned on site', 0.92);
+  }
+  if (has(allText, /\bgdpr\b/i)) {
+    addFinding(findings, 'gdpr', 'GDPR compliance detected', 'GDPR compliance mentioned on site', 0.88);
+  }
+  if (has(allText, /\bsso\b|\bsaml\b|\bscim\b/i)) {
+    addFinding(findings, 'sso', 'SSO/SAML enterprise auth detected', 'SSO or SAML authentication mentioned — enterprise buyer signal', 0.90);
+  }
+  if (has(allText, /\baudit log|\baudit trail\b/i)) {
+    addFinding(findings, 'audit_logs', 'Audit logs detected', 'Audit log feature mentioned — enterprise compliance signal', 0.88);
+  }
+  if (has(allText, /\brbac\b|\brole.based access\b|\bpermissions\b/i)) {
+    addFinding(findings, 'rbac', 'Role-based access control detected', 'RBAC or permissions system mentioned — enterprise readiness signal', 0.85);
+  }
+  if (has(allText, /\bsalesforce\b/i)) {
+    addFinding(findings, 'salesforce_integration', 'Salesforce integration detected', 'Salesforce integration mentioned — enterprise sales stack signal', 0.88);
+  }
+  if (has(allText, /\bsnowflake\b|\bbigquery\b|\bredshift\b|\bdatabricks\b/i)) {
+    addFinding(findings, 'data_warehouse', 'Data warehouse integration detected', 'Enterprise data warehouse integration mentioned', 0.85);
+  }
+  if (has(allText, /\bokta\b|\bauth0\b|\bactive directory\b/i)) {
+    addFinding(findings, 'enterprise_idp', 'Enterprise identity provider detected', 'Okta/Auth0/Active Directory mentioned — enterprise auth signal', 0.90);
+  }
+  if (has(allText, /\bdata residency\b|\bprivate cloud\b|\bself.hosted\b|\bon.premise\b/i)) {
+    addFinding(findings, 'data_residency', 'Data residency or self-hosting option detected', 'Data residency or self-hosting mentioned — enterprise data control signal', 0.88);
+  }
+
   const frameworks = payload.homepage?.tech_hints?.frameworks || [];
   const analytics = payload.homepage?.tech_hints?.analytics || [];
   const payments = payload.homepage?.tech_hints?.payment || [];
@@ -171,11 +208,27 @@ export function analyzePayloadSignals(payload: ExtractedPayload): SignalAnalysis
 }
 
 function buildGrowthSignals(analysis: SignalAnalysis): GrowthSignal[] {
-  return analysis.findings.map((finding) => ({
-    signal: finding.label,
-    evidence: finding.evidence,
-    confidence: finding.confidence,
-  }));
+  const now = new Date().toISOString();
+  return analysis.findings.map((finding) => {
+    const sourceType = inferSourceType(finding.key, finding.evidence);
+    const adjustedConfidence = applyTrust(finding.confidence, sourceType);
+    // Map signal key to decay type for freshness
+    const decayKey = finding.key === 'hiring' ? 'hiring_roles'
+      : finding.key === 'product_velocity' ? 'recent_news'
+      : finding.key === 'pricing' ? 'pricing'
+      : 'default';
+    return {
+      signal: finding.label,
+      evidence: finding.evidence,
+      confidence: adjustedConfidence,
+      source_type: sourceType,
+      trust_level: sourceType === 'careers_page' || sourceType === 'github' || sourceType === 'pricing_page' ? 'high'
+        : sourceType === 'ai_inference' ? 'low' : 'medium',
+      freshness_score: computeFreshnessScore(now, decayKey),
+      detected_at: now,
+      reasoning: `Detected via ${sourceType.replace(/_/g, ' ')} with ${Math.round(adjustedConfidence * 100)}% confidence after trust adjustment`,
+    };
+  });
 }
 
 function buildPainPoints(analysis: SignalAnalysis): PainPoint[] {
@@ -187,34 +240,58 @@ function buildPainPoints(analysis: SignalAnalysis): PainPoint[] {
   const hasSalesMotion = analysis.findings.some((f) => f.key === 'sales_motion');
 
   if (hasEnterprise) {
+    const finding = analysis.findings.find((f) => f.key === 'enterprise_readiness');
     pains.push({
       pain: 'Maintaining enterprise-grade security and compliance expectations',
       why: 'Trust/security/compliance surfaces indicate larger customers will scrutinize controls, procurement readiness, and reliability.',
-      evidence: analysis.findings.find((f) => f.key === 'enterprise_readiness')?.evidence || '',
+      evidence: finding?.evidence || '',
+      confidence: applyTrust(finding?.confidence || 0.75, 'pricing_page'),
+      source_type: 'pricing_page',
+      trust_level: 'high',
+      freshness_score: computeFreshnessScore(new Date().toISOString(), 'security_page'),
+      supporting_signals: ['enterprise_readiness'],
     });
   }
 
   if (hasDocs || hasIntegrations) {
+    const finding = analysis.findings.find((f) => f.key === 'developer_surface' || f.key === 'integrations');
     pains.push({
       pain: 'Scaling developer and integration ecosystem operations',
       why: 'Docs, APIs, SDKs, or integrations increase support, platform reliability, partner enablement, and developer experience pressure.',
-      evidence: analysis.findings.find((f) => f.key === 'developer_surface' || f.key === 'integrations')?.evidence || '',
+      evidence: finding?.evidence || '',
+      confidence: applyTrust(finding?.confidence || 0.72, 'page_text'),
+      source_type: 'page_text',
+      trust_level: 'high',
+      freshness_score: computeFreshnessScore(new Date().toISOString(), 'integrations'),
+      supporting_signals: ['developer_surface', 'integrations'].filter((k) => analysis.findings.some((f) => f.key === k)),
     });
   }
 
   if (hasHiring) {
+    const finding = analysis.findings.find((f) => f.key === 'hiring');
     pains.push({
       pain: 'Operational load from team growth',
       why: 'Hiring signals often precede process strain across onboarding, enablement, RevOps, support, and internal tooling.',
-      evidence: analysis.findings.find((f) => f.key === 'hiring')?.evidence || '',
+      evidence: finding?.evidence || '',
+      confidence: applyTrust(finding?.confidence || 0.70, 'careers_page'),
+      source_type: 'careers_page',
+      trust_level: 'high',
+      freshness_score: computeFreshnessScore(new Date().toISOString(), 'hiring_roles'),
+      supporting_signals: ['hiring'],
     });
   }
 
   if (hasSalesMotion) {
+    const finding = analysis.findings.find((f) => f.key === 'sales_motion');
     pains.push({
       pain: 'Enterprise pipeline conversion and sales handoff complexity',
       why: 'Demo/contact-sales and enterprise messaging imply a higher-touch sales process with handoff, qualification, and proof requirements.',
-      evidence: analysis.findings.find((f) => f.key === 'sales_motion')?.evidence || '',
+      evidence: finding?.evidence || '',
+      confidence: applyTrust(finding?.confidence || 0.68, 'page_text'),
+      source_type: 'page_text',
+      trust_level: 'high',
+      freshness_score: computeFreshnessScore(new Date().toISOString(), 'default'),
+      supporting_signals: ['sales_motion'],
     });
   }
 
@@ -368,5 +445,6 @@ export function improveIntelWithSignals(intel: BaseIntel, payload: ExtractedPayl
       },
     ]).slice(0, 6),
     action_recommendations: actionRecommendations,
+    correlated_inferences: correlateSignals(findings.map((f) => f.key)),
   };
 }

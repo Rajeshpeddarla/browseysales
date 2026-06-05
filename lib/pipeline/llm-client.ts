@@ -1,11 +1,12 @@
 // ============================================================
-// LLM Client — NVIDIA NIM Wrapper with Retry + JSON Validation
+// LLM Client — Ckey.vn API Wrapper with Retry + JSON Validation
 // Single call per company for base intel. Forced JSON output.
 // ============================================================
 
 import type { BaseIntel, ExtractedPayload, PersonalizedIntel } from './types';
 import { generateWithFallbacks } from '@/lib/llm-providers';
 import { analyzePayloadSignals } from './signal-engine';
+import { executeMultiPassExtraction } from './multi-pass-extractor';
 
 // --- System Prompts ---
 
@@ -15,19 +16,21 @@ Use only the provided evidence. Every major inference must include confidence an
 Never invent named people, funding rounds, customers, or technologies. Role-level stakeholders are allowed when names are not present.
 QUALITY BAR:
 - Do not write generic action items like "focus on platform engineering" or repeat the same recommendation.
-- Each pain point must state a business consequence and cite a source signal.
+- Each pain point must state a business consequence and cite a source signal with the specific page URL or quoted text where possible.
 - Each recommended action must be a concrete sales move: who to target, what to reference, what question to ask, or what proof to bring.
 - Buying intent means "likely to buy a category of software/service soon"; account value alone is not buying intent.
 - If the company is a large vendor, distinguish "high-value account" from "high buying intent".
+- For evidence fields: always include the source page URL (e.g. "careers: https://acme.com/careers") or a short quoted phrase from the page. Never just say "signal detected".
 Output ONLY the raw JSON object. No prose. No commentary. No markdown fences.`;
 
 const PERSONALIZATION_SYSTEM_PROMPT = `You are a world-class enterprise B2B sales copywriter and personalization expert. Given company intelligence and a user's sales context (product details, ICP target), generate highly targeted, personalized outreach hooks and talking points.
 CRITICAL RULES FOR OUTREACH HOOKS:
 1. NEVER start with generic formulas like "I see you use [Tech]", "I noticed you are in the [Industry] space", or "Congrats on the growth!".
 2. Connect the value proposition of the USER'S product directly to the TARGET company's specific situation, features, or pain points (e.g. self-hosting, privacy-first, desktop clients, or post-funding challenges).
-3. The email hook must be a concise, direct teaser (max 2 sentences) that highlights a clear business outcome.
+3. The email hook must be a complete 2-3 sentence cold email opener (not just a teaser) that highlights a clear business outcome and ends with a soft CTA.
 4. The LinkedIn hook must be highly conversational, casual, and end in a soft, low-friction query (e.g., "Curious if that's a priority for the engineering team right now?").
-5. The cold call opener must be a direct, engaging pain-opener hook.
+5. The cold call opener must be a direct, engaging pain-opener hook (1-2 sentences max).
+6. If a contact name is provided, address them by first name in the email and LinkedIn hooks.
 Output ONLY a raw JSON object matching the schema. No prose. No commentary. No markdown fences.`;
 
 // --- Schema Templates ---
@@ -36,6 +39,7 @@ const BASE_INTEL_SCHEMA = `{
   "summary_1_line": "string - one sentence company summary",
   "summary_paragraph": "string - 2-3 paragraph detailed summary",
   "industry": "string - primary industry",
+  "founders": ["string array - names of the founders"],
   "growth_stage": "early | growth | scale | enterprise",
   "employee_estimate": "MUST be EXACTLY one of: '1-10' | '11-50' | '51-200' | '201-500' | '501-1000' | '1000+'. Use the LOWEST plausible band based on evidence. If uncertain, use '11-50'. NEVER output a range like '50-200'.",
   "tech_stack": ["string array of SPECIFIC technologies only — e.g. React, PostgreSQL, AWS Lambda. NEVER generic terms like 'Cloud Computing' or 'Software'."],
@@ -58,6 +62,7 @@ const ADVANCED_INTEL_SCHEMA = `Also include these advanced revenue-intelligence 
     "industry": "string",
     "business_model": "SaaS | services | marketplace | ecommerce | media | open_source | agency | other | null",
     "target_market": "string|null",
+    "locations": ["string array of all physical branches or office locations mentioned"],
     "growth_stage": "early | growth | scale | enterprise",
     "go_to_market": "product-led | sales-led | hybrid | unknown",
     "confidence": 0.0-1.0,
@@ -129,10 +134,15 @@ const PERSONALIZATION_SCHEMA = `{
   "icp_match_score": 0-100,
   "icp_match_reasoning": "string",
   "top_3_hooks": [
-    { "hook": "string - the outreach message", "channel": "email | linkedin | call", "why_it_works": "string" }
+    {
+      "hook": "string - the full outreach message (2-3 sentences for email, 1-2 for linkedin/call)",
+      "subject_line": "string - email subject line (only for channel=email, else null)",
+      "channel": "email | linkedin | call",
+      "why_it_works": "string - specific reason tied to company signals"
+    }
   ],
-  "talking_points": ["string array"],
-  "objections_anticipated": ["string array"]
+  "talking_points": ["string array - specific, evidence-backed talking points"],
+  "objections_anticipated": ["string array - likely objections with suggested responses"]
 }`;
 
 // --- Core LLM Call ---
@@ -142,10 +152,11 @@ interface LLMCallOptions {
   userPrompt: string;
   maxTokens?: number;
   temperature?: number;
+  agentRole?: 'reasoning' | 'fast' | 'formatting';
 }
 
 async function callLLM(options: LLMCallOptions): Promise<string> {
-  const { systemPrompt, userPrompt, maxTokens = 2000, temperature = 0.2 } = options;
+  const { systemPrompt, userPrompt, maxTokens = 2000, temperature = 0.2, agentRole = 'reasoning' } = options;
 
   const result = await generateWithFallbacks({
     messages: [
@@ -155,7 +166,8 @@ async function callLLM(options: LLMCallOptions): Promise<string> {
     responseFormatJson: true,
     maxTokens,
     temperature,
-    timeoutMs: 60000,
+    agentRole,
+    timeoutMs: 180000, // 3 min — cloud API may take time for large prompts
   });
 
   return result.content;
@@ -184,7 +196,7 @@ function extractJSON(raw: string): string {
 }
 
 /**
- * Parse and validate JSON with retry
+ * Parse and validate JSON with retry — logs raw response on failure
  */
 async function parseWithRetry<T>(
   raw: string,
@@ -198,11 +210,15 @@ async function parseWithRetry<T>(
     if (validator(parsed)) {
       return { data: parsed, degraded: false };
     }
-  } catch {
-    // Parse failed, will retry
+    // Parsed but failed validator — log what we got
+    console.warn('[LLM] Response parsed but failed validator. Keys:', Object.keys(parsed as object).slice(0, 10).join(', '));
+    console.warn('[LLM] Raw response preview:', raw.slice(0, 300));
+  } catch (e) {
+    console.warn('[LLM] JSON parse failed on attempt 1:', (e as Error).message);
+    console.warn('[LLM] Raw response preview:', raw.slice(0, 300));
   }
 
-  // Retry once
+  // Retry once with a simpler prompt
   try {
     const retryRaw = await retryFn();
     const jsonStr = extractJSON(retryRaw);
@@ -210,8 +226,10 @@ async function parseWithRetry<T>(
     if (validator(parsed)) {
       return { data: parsed, degraded: false };
     }
-  } catch {
-    // Second parse also failed
+    console.warn('[LLM] Retry response parsed but failed validator. Keys:', Object.keys(parsed as object).slice(0, 10).join(', '));
+    console.warn('[LLM] Retry raw preview:', retryRaw.slice(0, 300));
+  } catch (e) {
+    console.warn('[LLM] JSON parse failed on attempt 2:', (e as Error).message);
   }
 
   throw new Error('Failed to parse LLM response after 2 attempts');
@@ -315,9 +333,9 @@ function buildBaseIntelPrompt(payload: ExtractedPayload): string {
     sections.push(`HAS PRICING TABLE: ${payload.homepage.has_pricing_table}`);
     sections.push(`HAS LOGO WALL: ${payload.homepage.has_logo_wall} (${payload.homepage.logo_wall_count} logos)`);
 
-    // Truncate visible text
+    // Truncate visible text — keep it tight for free-tier models
     if (payload.homepage.visible_text) {
-      sections.push(`\nHOMEPAGE TEXT (truncated):\n${payload.homepage.visible_text.slice(0, 8000)}`);
+      sections.push(`\nHOMEPAGE TEXT (truncated):\n${payload.homepage.visible_text.slice(0, 2500)}`);
     }
   }
 
@@ -329,14 +347,25 @@ function buildBaseIntelPrompt(payload: ExtractedPayload): string {
     sections.push(`PRIORITY PAGE TYPES CRAWLED: ${Array.from(deterministicSignals.pageTypes).join(', ') || 'none'}`);
   }
 
-  // Sub-pages
+  // Sub-pages — tight cap so total prompt stays under ~8k tokens
   if (payload.pages?.length) {
     sections.push('\nSUB-PAGES:');
     for (const page of payload.pages) {
       sections.push(`\n--- ${page.type.toUpperCase()} PAGE: ${page.url} ---`);
-      sections.push(page.visible_text.slice(0, 3000));
-      if (page.ocr_text) {
-        sections.push(`OCR TEXT: ${page.ocr_text.slice(0, 1000)}`);
+      sections.push(page.visible_text.slice(0, 800));
+
+      // Include visual signals from Playwright DOM extraction
+      if (page.visual_signals?.length) {
+        sections.push(`VISUAL SIGNALS: ${page.visual_signals.join('; ')}`);
+      }
+      if (page.pricing_blocks?.length) {
+        sections.push(`PRICING BLOCKS DETECTED: ${page.pricing_blocks.slice(0, 2).join(' | ').slice(0, 300)}`);
+      }
+      if (page.enterprise_signals && Object.keys(page.enterprise_signals).length > 0) {
+        const flat = Object.entries(page.enterprise_signals)
+          .map(([k, v]) => `${k}: ${(v as string[]).join(', ')}`)
+          .join('; ');
+        sections.push(`ENTERPRISE SIGNALS (DOM): ${flat}`);
       }
     }
   }
@@ -380,6 +409,20 @@ function buildBaseIntelPrompt(payload: ExtractedPayload): string {
         sections.push(`  - "${prod.name}": ${prod.tagline} (${prod.votes} votes)`);
       }
     }
+
+    if (payload.social_signals.google_search_intel?.length) {
+      sections.push('COMPANY SEARCH INTEL (Often contains employee counts and company descriptions):');
+      for (const intel of payload.social_signals.google_search_intel.slice(0, 3)) {
+        sections.push(`  - "${intel}"`);
+      }
+    }
+
+    if (payload.social_signals.native_contacts?.length) {
+      sections.push('NATIVE CONTACTS DETECTED (indicates roles and departments):');
+      for (const c of payload.social_signals.native_contacts.slice(0, 5)) {
+        sections.push(`  - ${c.full_name}: ${c.title} (${c.source})`);
+      }
+    }
   }
 
   // OCR results
@@ -404,28 +447,19 @@ function buildBaseIntelPrompt(payload: ExtractedPayload): string {
 }
 
 /**
- * Generate base intel from extracted payload
+ * Generate base intel from extracted payload using Multi-Pass Pattern
  */
 export async function generateBaseIntel(
   payload: ExtractedPayload
 ): Promise<{ intel: BaseIntel; degraded: boolean }> {
-  const userPrompt = buildBaseIntelPrompt(payload);
-
-  const callFn = () =>
-    callLLM({
-      systemPrompt: BASE_INTEL_SYSTEM_PROMPT,
-      userPrompt,
-      maxTokens: 6000,
-      temperature: 0.2,
-    });
+  const contextString = buildBaseIntelPrompt(payload);
 
   try {
-    const raw = await callFn();
-    const result = await parseWithRetry<BaseIntel>(raw, isBaseIntel, callFn);
-    return { intel: result.data, degraded: result.degraded };
+    const intel = await executeMultiPassExtraction(payload, contextString);
+    return { intel, degraded: false };
   } catch (error) {
-    console.error('[LLM Pipeline] generateBaseIntel failed:', error);
-    // After 2 failures, return degraded intel from extraction
+    console.error('[LLM Pipeline] generateBaseIntel Multi-Pass failed:', error);
+    // Return degraded intel from extraction
     return {
       intel: createDegradedIntel(payload),
       degraded: true,
@@ -461,6 +495,7 @@ ${PERSONALIZATION_SCHEMA}`;
       userPrompt,
       maxTokens: 800,
       temperature: 0.3,
+      agentRole: 'formatting'
     });
 
   try {

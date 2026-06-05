@@ -6,6 +6,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { runResearchPipeline } from '@/lib/pipeline';
 
+export const maxDuration = 300; // Allow up to 5 minutes on Vercel
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -64,7 +66,7 @@ export async function POST(request: NextRequest) {
     // ──────────────────────────────────────────────────────────
 
     const body = await request.json();
-    const { domain, extracted_payload, force_refresh } = body;
+    const { domain, extracted_payload, force_refresh, manual_links } = body;
 
     if (!domain) {
       return NextResponse.json(
@@ -86,7 +88,8 @@ export async function POST(request: NextRequest) {
       cleanDomain,
       user.id,
       extracted_payload || undefined,
-      force_refresh || false
+      force_refresh || false,
+      manual_links || undefined
     );
 
     // Increment usage after successful pipeline

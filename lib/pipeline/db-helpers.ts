@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
-import type { BaseIntel, PersonalizedIntel } from './types';
+import type { BaseIntel, PersonalizedIntel, Contact } from './types';
+import { inferSeniority, inferDepartment } from './contact-finder';
 
 /**
  * Capitalizes a clean company name from the page title or domain name
@@ -26,6 +27,12 @@ function dedupeStrings(items: string[]): string[] {
   });
 }
 
+function buildLinkedInSearchUrl(role: string, domain: string): string {
+  const company = domain.split('.')[0];
+  const query = encodeURIComponent(`${role} ${company}`);
+  return `https://www.linkedin.com/search/results/people/?keywords=${query}`;
+}
+
 /**
  * Saves a pipeline research brief (BaseIntel + PersonalizedIntel) directly to the web dashboard briefs database
  */
@@ -34,7 +41,8 @@ export async function savePipelineBriefToDatabase(
   userId: string,
   baseIntel: BaseIntel,
   personalized: PersonalizedIntel | null,
-  extractedPayload?: any
+  extractedPayload?: any,
+  enrichedContacts?: Contact[]
 ): Promise<any | null> {
   try {
     const supabase = await createClient();
@@ -60,62 +68,64 @@ export async function savePipelineBriefToDatabase(
       };
     });
 
-    // 3. Map decision makers
-    const people = (baseIntel.decision_makers_likely || []).map((dm: any) => {
-      let seniority: 'c_level' | 'vp' | 'director' | 'manager' | 'individual' = 'director';
-      const roleLower = (dm.role || '').toLowerCase();
-      if (
-        roleLower.includes('founder') ||
-        roleLower.includes('ceo') ||
-        roleLower.includes('cto') ||
-        roleLower.includes('cfo') ||
-        roleLower.includes('chief') ||
-        roleLower.includes('c-')
-      ) {
-        seniority = 'c_level';
-      } else if (roleLower.includes('vp') || roleLower.includes('vice president')) {
-        seniority = 'vp';
-      } else if (roleLower.includes('director')) {
-        seniority = 'director';
-      } else if (roleLower.includes('manager')) {
-        seniority = 'manager';
-      } else {
-        seniority = 'individual';
-      }
+    // 3. Map contacts — use enriched contacts if available, otherwise map decision_makers_likely
+    //    with honest null values (no fabricated emails or names)
+    let people: any[];
 
-      return {
-        full_name: dm.role,
+    if (enrichedContacts && enrichedContacts.length > 0) {
+      // Real enriched contacts from Hunter/Apollo/page extraction/LLM inference
+      people = enrichedContacts.map((c) => ({
+        full_name: c.full_name,                    // null if no real name found
+        title: c.title,
+        seniority: c.seniority,
+        department: c.department,
+        linkedin_url: c.linkedin_url || '',
+        email: c.email || null,
+        email_confidence: c.email_confidence || null,
+        email_verified: c.email_confidence === 'verified',
+        phone: c.phone || null,
+        source: c.source,
+        why_contact: c.why_contact,
+      }));
+    } else {
+      // Fallback: role-level suggestions from decision_makers_likely
+      // Honest: no fabricated emails, no invented names
+      people = (baseIntel.decision_makers_likely || []).map((dm: any) => ({
+        full_name: null,                           // no real name — don't fabricate
         title: dm.role,
-        seniority,
-        department: 'Sales',
-        linkedin_url: '',
-        email_guess: `${roleLower.split(' ')[0] || 'info'}@${domain}`,
+        seniority: inferSeniority(dm.role),
+        department: inferDepartment(dm.role),
+        linkedin_url: buildLinkedInSearchUrl(dm.role, domain),
+        email: null,                               // no fabricated email
+        email_confidence: null,
         email_verified: false,
-      };
-    });
+        phone: null,
+        source: 'llm_inferred',
+        why_contact: dm.why || 'Likely decision-maker based on company signals',
+      }));
+    }
 
     // 4. Map pain points
     const pain_hypotheses = dedupeStrings((baseIntel.pain_points || []).map((p: any) => p.pain)).slice(0, 8);
     const pain_details = (baseIntel.pain_points || []).slice(0, 8);
 
-    // 5. Map outreach hooks
+    // 5. Map outreach hooks — keep full hook objects for subject lines
+    const allHooks = personalized?.top_3_hooks || [];
     const recommendedHook = baseIntel.outreach_strategy?.recommended_hook || '';
     const outreach = {
-      email: (personalized?.top_3_hooks || [])
-        .filter((h) => h.channel === 'email')
-        .map((h) => h.hook),
-      linkedin_dm: (personalized?.top_3_hooks || [])
-        .filter((h) => h.channel === 'linkedin')
-        .map((h) => h.hook),
-      cold_call_opener:
-        (personalized?.top_3_hooks || []).find((h) => h.channel === 'call')?.hook || '',
+      email: allHooks.filter((h) => h.channel === 'email').map((h) => h.hook),
+      linkedin_dm: allHooks.filter((h) => h.channel === 'linkedin').map((h) => h.hook),
+      cold_call_opener: allHooks.find((h) => h.channel === 'call')?.hook || '',
     };
+    // Fallback: use recommended_hook only if no personalized hooks exist for that channel
     if (recommendedHook && outreach.email.length === 0) {
       outreach.email = [recommendedHook];
     }
-    if (recommendedHook && outreach.linkedin_dm.length === 0) {
+    if (recommendedHook && outreach.linkedin_dm.length === 0 && outreach.email[0] !== recommendedHook) {
       outreach.linkedin_dm = [recommendedHook];
     }
+    // Store full hook objects so UI can access subject_line and why_it_works
+    const outreach_hooks = allHooks;
 
     // 6. Build the BriefData structure fully compatible with dashboard
     const briefData = {
@@ -127,8 +137,10 @@ export async function savePipelineBriefToDatabase(
         industry: baseIntel.industry || 'Technology',
         size_band: baseIntel.employee_estimate || '11-50',
         founded: null,
-        hq: baseIntel.growth_stage || 'growth',
+        hq: extractedPayload?.metadata?.headquarters || null,
+        locations: baseIntel.company_summary?.locations || [],
         logo_url: `https://logo.clearbit.com/${domain}`,
+        founders: baseIntel.founders || [],
       },
       tech_stack: baseIntel.tech_stack || [],
       signals,
@@ -136,6 +148,7 @@ export async function savePipelineBriefToDatabase(
       pain_hypotheses,
       pain_details,
       outreach,
+      outreach_hooks,
       company_summary: baseIntel.company_summary,
       buying_intent: baseIntel.buying_intent,
       why_now: baseIntel.why_now || [],
@@ -150,6 +163,8 @@ export async function savePipelineBriefToDatabase(
       playbook_id: null,
       generated_at: new Date().toISOString(),
       ai_cost_usd: 0.01,
+      pages: extractedPayload?.pages || [],
+      ocr_results: extractedPayload?.ocr_results || [],
     };
 
     // 7. Upsert the Company record

@@ -568,3 +568,129 @@ export async function upgradeUserPlan(plan: "free" | "pro" | "team" | "enterpris
     return { ok: false, error: { code: "UPGRADE_FAILED", message: error.message } };
   }
 }
+
+// ============================================================
+// API KEY MANAGEMENT (BYOK)
+// Keys are stored per-user in the profiles table.
+// Only the owning user can read or write their own keys.
+// ============================================================
+
+export async function saveApiKey(service: 'hunter', apiKey: string) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { ok: false, error: { code: "UNAUTHORIZED", message: "Not authenticated" } };
+
+    const columnMap: Record<string, string> = {
+      hunter: 'hunter_api_key',
+    };
+
+    const column = columnMap[service];
+    if (!column) return { ok: false, error: { code: "INVALID_SERVICE", message: `Unknown service: ${service}` } };
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ [column]: apiKey.trim() || null })
+      .eq('id', user.id);
+
+    if (error) throw error;
+    return { ok: true };
+  } catch (error: any) {
+    return { ok: false, error: { code: "SAVE_FAILED", message: error.message } };
+  }
+}
+
+export async function getApiKeys() {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { ok: false, error: { code: "UNAUTHORIZED", message: "Not authenticated" } };
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('hunter_api_key')
+      .eq('id', user.id)
+      .single();
+
+    if (error) throw error;
+
+    // Return masked values — never expose the full key to the client
+    return {
+      ok: true,
+      data: {
+        hunter: data?.hunter_api_key
+          ? maskKey(data.hunter_api_key)
+          : null,
+        hunter_connected: !!data?.hunter_api_key,
+      },
+    };
+  } catch (error: any) {
+    return { ok: false, error: { code: "FETCH_FAILED", message: error.message } };
+  }
+}
+
+/** Show first 4 + last 4 chars, mask the middle */
+function maskKey(key: string): string {
+  if (key.length <= 8) return '••••••••';
+  return `${key.slice(0, 4)}${'•'.repeat(Math.min(key.length - 8, 20))}${key.slice(-4)}`;
+}
+
+// ============================================================
+// WATCH MODE — Track companies, get alerted on changes
+// ============================================================
+
+import {
+  createWatch,
+  deleteWatch,
+  getUserWatches,
+  getUserAlerts,
+  markAlertsRead,
+  getUnreadAlertCount,
+} from '@/lib/pipeline/watch-mode';
+
+export async function watchDomain(domain: string, signals?: string[]) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated' } };
+  return createWatch(user.id, domain, signals);
+}
+
+export async function unwatchDomain(domain: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: { code: 'UNAUTHORIZED', message: 'Not authenticated' } };
+  await deleteWatch(user.id, domain);
+  return { ok: true };
+}
+
+export async function getWatches() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, data: [] };
+  const watches = await getUserWatches(user.id);
+  return { ok: true, data: watches };
+}
+
+export async function getAlerts(limit = 20) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, data: [] };
+  const alerts = await getUserAlerts(user.id, limit);
+  return { ok: true, data: alerts };
+}
+
+export async function readAlerts(alertIds: string[]) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false };
+  await markAlertsRead(user.id, alertIds);
+  return { ok: true };
+}
+
+export async function getAlertCount() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, count: 0 };
+  const count = await getUnreadAlertCount(user.id);
+  return { ok: true, count };
+}
